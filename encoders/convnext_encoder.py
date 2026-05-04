@@ -19,14 +19,17 @@ class ConvNeXtEncoder:
             waveform = torchaudio.functional.resample(waveform, sr, self.sample_rate)
         return waveform
 
-    def get_embeddings(self, audio_path):
-        waveform = self.load_audio(audio_path)
+    def get_embeddings(self, audio_input):
+        if isinstance(audio_input, str):
+            waveform = self.load_audio(audio_input)
+        else:
+            waveform = audio_input
+        
         with torch.no_grad():
-            scene_emb = self.model.forward_scene_embeddings(waveform)
             frame_emb = self.model.forward_frame_embeddings(waveform)
             B, C, T, F = frame_emb.shape
             frame_emb = frame_emb.permute(0, 2, 3, 1).reshape(B, T*F, C)
-        return scene_emb, frame_emb
+        return frame_emb  # [1, 105, 768]
 
 
 if __name__ == "__main__":
