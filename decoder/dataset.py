@@ -170,7 +170,7 @@ class ClothoAudioCaptionDataset(Dataset):
         sample = self.samples[idx]
 
         caption = sample["caption"]
-        full_text = self.prompt + " " + caption
+        full_text = self.prompt + " " + caption + self.tokenizer.eos_token
 
         encoded = self.tokenizer(
             full_text,
