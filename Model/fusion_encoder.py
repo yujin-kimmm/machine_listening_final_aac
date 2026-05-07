@@ -33,6 +33,38 @@ from BEATs import BEATs, BEATsConfig
 from convnext_encoder import ConvNeXtEncoder
 
 
+def load_audio_batch(audio_paths, target_sr=16000):
+    """Load a list of audio file paths and pad into a batch tensor.
+    
+    Use this in the training loop to convert the data loader's audio_path
+    strings into the waveform tensor that AudioToConformer expects.
+    
+    Args:
+        audio_paths: list of B file path strings
+        target_sr: target sample rate (default 16kHz for BEATs)
+    Returns:
+        waveforms: [B, max_samples] — zero-padded batch tensor
+        wav_lengths: [B] — actual length of each waveform in samples
+    """
+    waveforms = []
+    for path in audio_paths:
+        wav, sr = torchaudio.load(path)
+        if sr != target_sr:
+            wav = torchaudio.functional.resample(wav, sr, target_sr)
+        if wav.shape[0] > 1:  # stereo → mono
+            wav = wav.mean(dim=0, keepdim=True)
+        waveforms.append(wav.squeeze(0))  # [num_samples]
+    
+    # Pad to longest and stack
+    lengths = torch.tensor([w.size(0) for w in waveforms])
+    max_len = lengths.max().item()
+    padded = torch.zeros(len(waveforms), max_len)
+    for i, w in enumerate(waveforms):
+        padded[i, :w.size(0)] = w
+    
+    return padded, lengths
+
+
 class MultiLayerAggregation(nn.Module):
     """Aggregate all BEATs encoder layer outputs via concatenate-then-compress.
     
