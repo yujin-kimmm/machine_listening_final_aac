@@ -51,6 +51,7 @@ class AudioPrefixGPT2(nn.Module):
         attention_mask,
         labels=None,
         prompt_length=None,
+        audio_attention_mask=None,
     ):
         """
         audio_embeddings:
@@ -92,12 +93,18 @@ class AudioPrefixGPT2(nn.Module):
         # Shape: (batch, prefix_length + text_length, gpt_dim)
 
         # Extend attention mask for audio prefix
-        prefix_attention_mask = torch.ones(
-            batch_size,
-            prefix_length,
-            device=attention_mask.device,
-            dtype=attention_mask.dtype,
-        )
+        if audio_attention_mask is None:
+            prefix_attention_mask = torch.ones(
+                batch_size,
+                prefix_length,
+                device=attention_mask.device,
+                dtype=attention_mask.dtype,
+            )
+        else:
+            prefix_attention_mask = audio_attention_mask.to(
+                device=attention_mask.device,
+                dtype=attention_mask.dtype,
+            )
 
         new_attention_mask = torch.cat(
             [prefix_attention_mask, attention_mask],
@@ -145,6 +152,7 @@ class AudioPrefixGPT2(nn.Module):
         audio_embeddings,
         input_ids,
         attention_mask,
+        audio_attention_mask=None,
         max_new_tokens=50,
         do_sample=True,
         temperature=0.8,
@@ -173,12 +181,18 @@ class AudioPrefixGPT2(nn.Module):
         )
 
         # Attention mask for audio prefix + prompt
-        prefix_attention_mask = torch.ones(
-            batch_size,
-            prefix_length,
-            device=attention_mask.device,
-            dtype=attention_mask.dtype,
-        )
+        if audio_attention_mask is None:
+            prefix_attention_mask = torch.ones(
+                batch_size,
+                prefix_length,
+                device=attention_mask.device,
+                dtype=attention_mask.dtype,
+            )
+        else:
+            prefix_attention_mask = audio_attention_mask.to(
+                device=attention_mask.device,
+                dtype=attention_mask.dtype,
+            )
 
         new_attention_mask = torch.cat(
             [prefix_attention_mask, attention_mask],

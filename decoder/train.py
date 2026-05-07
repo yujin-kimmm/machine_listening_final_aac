@@ -4,6 +4,8 @@ import os
 import sys
 
 import torch
+import wandb
+import yaml
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
@@ -13,23 +15,30 @@ from dataset import ClothoAudioCaptionDataset, count_clotho_split_sources, count
 from model import AudioPrefixGPT2
 
 
-caption_dir = "/scratch/yk3281/dataset/clotho"
-audio_root_dir = "/scratch/yk3281/dataset/clotho"
+with open("config.yaml", "r") as f:
+    config = yaml.safe_load(f)
 
-batch_size = 8
-num_workers = 0
-epochs = 5
-lr = 1e-4
-weight_decay = 0.01
-val_ratio = 0.1
-random_seed = 42
+caption_dir = config["caption_dir"]
+audio_root_dir = config["audio_root_dir"]
 
-prefix_length = 10
-audio_dim = 512
-max_length = 128
+batch_size = config["batch_size"]
+num_workers = config["num_workers"]
+epochs = config["epochs"]
+lr = config["lr"]
+weight_decay = config["weight_decay"]
+val_ratio = config["val_ratio"]
+random_seed = 42 
 
-save_dir = "outputs/simple_train"
-prompt_text = "Describe this audio:"
+target_prefix_length = config["target_prefix_length"]
+prefix_length = config["prefix_length"] # for fake encoder
+audio_dim = config["audio_dim"]
+max_length = config["max_length"]
+preview_num_samples = config["preview_num_samples"]
+audio_sample_rate = config["audio_sample_rate"]
+
+save_dir = config["save_dir"]
+prompt_text = config["prompt_text"]
+_embedding_length_cache = {}
 
 
 def get_fake_encoder_outputs(audio_paths, device):
@@ -53,6 +62,120 @@ def get_fake_encoder_outputs(audio_paths, device):
     return fake_encoder_outputs.to(device)
 
 
+def get_global_max_embedding_length(embedding_root_dir):
+    if embedding_root_dir in _embedding_length_cache:
+        return _embedding_length_cache[embedding_root_dir]
+
+    max_sequence_length = 0
+
+    for split_name in ["development", "validation", "evaluation"]:
+        split_dir = os.path.join(embedding_root_dir, split_name)
+        if not os.path.isdir(split_dir):
+            continue
+
+        for file_name in sorted(os.listdir(split_dir)):
+            if not file_name.endswith(".pt"):
+                continue
+
+            embedding_path = os.path.join(split_dir, file_name)
+            embedding = torch.load(embedding_path, map_location="cpu")
+
+            if not isinstance(embedding, torch.Tensor):
+                raise TypeError(f"Expected tensor embedding at {embedding_path}")
+
+            if embedding.dim() == 3 and embedding.size(0) == 1:
+                embedding = embedding.squeeze(0)
+
+            if embedding.dim() == 1:
+                current_length = 1
+            elif embedding.dim() == 2:
+                current_length = embedding.size(0)
+            else:
+                raise ValueError(
+                    f"Expected 1D or 2D tensor at {embedding_path}, got shape {tuple(embedding.shape)}"
+                )
+
+            max_sequence_length = max(max_sequence_length, current_length)
+
+    if max_sequence_length == 0:
+        raise RuntimeError(
+            f"No embedding files found under {embedding_root_dir}"
+        )
+
+    _embedding_length_cache[embedding_root_dir] = max_sequence_length
+    return max_sequence_length
+
+
+def get_test_encoder_outputs(audio_paths, device, target_prefix_length=target_prefix_length):
+    embedding_root_dir = "/scratch/yk3281/repo/machine_listening_final_aac/decoder/test_emb"
+    batch_embeddings = []
+    audio_attention_masks = []
+    max_sequence_length = 0
+
+    for audio_path in audio_paths:
+        split_name = os.path.basename(os.path.dirname(audio_path))
+        audio_file_name = os.path.basename(audio_path)
+        embedding_path = os.path.join(
+            embedding_root_dir,
+            split_name,
+            f"{audio_file_name}.pt",
+        )
+
+        embedding = torch.load(embedding_path, map_location="cpu")
+
+        if not isinstance(embedding, torch.Tensor):
+            raise TypeError(f"Expected tensor embedding at {embedding_path}")
+
+        if embedding.dim() == 3 and embedding.size(0) == 1:
+            embedding = embedding.squeeze(0)
+
+        if embedding.dim() == 1:
+            embedding = embedding.unsqueeze(0)
+
+        if embedding.dim() != 2:
+            raise ValueError(
+                f"Expected 1D or 2D tensor at {embedding_path}, got shape {tuple(embedding.shape)}"
+            )
+
+        if target_prefix_length is not None:
+            embedding = torch.nn.functional.adaptive_avg_pool1d(
+                embedding.transpose(0, 1).unsqueeze(0),
+                target_prefix_length,
+            ).squeeze(0).transpose(0, 1)
+
+        batch_embeddings.append(embedding)
+        max_sequence_length = max(max_sequence_length, embedding.size(0))
+
+    padded_embeddings = []
+
+    for embedding in batch_embeddings:
+        sequence_length = embedding.size(0)
+        pad_length = max_sequence_length - sequence_length
+
+        if pad_length > 0:
+            pad_tensor = torch.zeros(
+                pad_length,
+                embedding.size(1),
+                dtype=embedding.dtype,
+            )
+            embedding = torch.cat([embedding, pad_tensor], dim=0)
+
+        padded_embeddings.append(embedding)
+        audio_attention_masks.append(
+            torch.cat(
+                [
+                    torch.ones(sequence_length, dtype=torch.long),
+                    torch.zeros(pad_length, dtype=torch.long),
+                ],
+                dim=0,
+            )
+        )
+
+    test_encoder_outputs = torch.stack(padded_embeddings, dim=0)
+    audio_attention_mask = torch.stack(audio_attention_masks, dim=0)
+    return test_encoder_outputs.to(device), audio_attention_mask.to(device)
+
+
 def run_batch(model, batch, device, inspect_batch=False):
     # Step A. Text side inputs from dataset
     input_ids = batch["input_ids"].to(device)
@@ -61,7 +184,7 @@ def run_batch(model, batch, device, inspect_batch=False):
     prompt_length = batch["prompt_length"][0].item()
 
     # Step B. Placeholder for future fusion encoder output
-    fake_encoder_outputs = get_fake_encoder_outputs(
+    fake_encoder_outputs, audio_attention_mask = get_test_encoder_outputs(
         batch["audio_path"],
         device,
     )
@@ -73,12 +196,13 @@ def run_batch(model, batch, device, inspect_batch=False):
         attention_mask=attention_mask,
         labels=labels,
         prompt_length=prompt_length,
+        audio_attention_mask=audio_attention_mask,
     )
 
     if inspect_batch:
         caption_token_count = (labels != -100).sum().item()
         print("[inspect] batch structure")
-        print(f"[inspect] fake_encoder_outputs shape: {tuple(fake_encoder_outputs.shape)}")
+        print(f"[inspect] test_encoder_outputs shape: {tuple(fake_encoder_outputs.shape)}")
         print(f"[inspect] input_ids shape: {tuple(input_ids.shape)}")
         print(f"[inspect] attention_mask shape: {tuple(attention_mask.shape)}")
         print(f"[inspect] labels shape: {tuple(labels.shape)}")
@@ -89,53 +213,32 @@ def run_batch(model, batch, device, inspect_batch=False):
     return outputs.loss
 
 
-def build_prompt_batch(tokenizer, batch, device):
-    batch_size = len(batch["audio_path"])
-    encoded_prompt = tokenizer(
-        [prompt_text] * batch_size,
-        return_tensors="pt",
-        padding=True,
-        truncation=True,
-    )
+def collect_unique_preview_samples(val_loader, max_samples):
+    unique_audio_ids = set()
+    preview_samples = []
 
-    return {
-        "input_ids": encoded_prompt["input_ids"].to(device),
-        "attention_mask": encoded_prompt["attention_mask"].to(device),
-    }
+    for batch in val_loader:
+        batch_size = len(batch["audio_id"])
 
+        for idx in range(batch_size):
+            audio_id = batch["audio_id"][idx]
+            if audio_id in unique_audio_ids:
+                continue
 
-def preview_generation(model, val_loader, tokenizer, device, num_samples=2):
-    model.eval()
+            unique_audio_ids.add(audio_id)
+            preview_samples.append(
+                {
+                    "audio_id": audio_id,
+                    "file_name": batch["file_name"][idx],
+                    "audio_path": batch["audio_path"][idx],
+                    "caption": batch["caption"][idx],
+                }
+            )
 
-    with torch.no_grad():
-        batch = next(iter(val_loader))
-        sample_count = min(num_samples, len(batch["audio_path"]))
+            if len(preview_samples) >= max_samples:
+                return preview_samples
 
-        fake_encoder_outputs = get_fake_encoder_outputs(
-            batch["audio_path"][:sample_count],
-            device,
-        )
-        prompt_batch = build_prompt_batch(tokenizer, batch, device)
-
-        generated_ids = model.generate_caption(
-            audio_embeddings=fake_encoder_outputs,
-            input_ids=prompt_batch["input_ids"][:sample_count],
-            attention_mask=prompt_batch["attention_mask"][:sample_count],
-            max_new_tokens=30,
-            do_sample=False,
-            eos_token_id=tokenizer.eos_token_id,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-
-    print("[val] sample generations")
-    for idx in range(sample_count):
-        generated_text = tokenizer.decode(
-            generated_ids[idx],
-            skip_special_tokens=True,
-        )
-        print(f"sample {idx + 1} file: {batch['file_name'][idx]}")
-        print(f"sample {idx + 1} target: {batch['caption'][idx]}")
-        print(f"sample {idx + 1} generated: {generated_text}")
+    return preview_samples
 
 
 def save_checkpoint(model, optimizer, epoch_idx, best_val_loss, save_path):
@@ -177,6 +280,14 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     os.makedirs(save_dir, exist_ok=True)
     resume = "--resume" in sys.argv
+
+    wandb.init(
+        project=config["project"],
+        entity=config["entity"],
+        name=config["name"],
+        config=config,
+        dir=config["wandb_dir"],
+    )
 
     print(f"Using device: {device}")
     # ----------------
@@ -252,10 +363,12 @@ def main():
         device,
         resume=resume,
     )
-
+    # ----------------- 
+    # Train 
+    # ------------------
     for epoch_idx in range(start_epoch, epochs):
         print(f"\n========== Epoch {epoch_idx + 1}/{epochs} ==========")
-        # print("Step 6. Train decoder with fake encoder outputs")
+        # print(" Train decoder with fake encoder outputs")
         model.train()
         train_loss_sum = 0.0
 
@@ -295,18 +408,82 @@ def main():
         val_loss = val_loss_sum / len(val_loader)
         val_ppl = math.exp(val_loss) if val_loss < 20 else float("inf")
 
+        wandb.log(
+            {
+                "epoch": epoch_idx + 1,
+                "train_loss": train_loss,
+                # "train_ppl": train_ppl,
+                "val_loss": val_loss,
+                # "val_ppl": val_ppl,
+            }
+        )
+
         print(
             f"[val] epoch {epoch_idx + 1} | "
             f"loss {val_loss:.4f} | "
             f"ppl {val_ppl:.4f}"
         )
 
-        print("Step 8. Preview validation generations")
-        preview_generation(
-            model,
-            val_loader,
-            tokenizer,
-            device,
+        with torch.no_grad():
+            preview_samples = collect_unique_preview_samples(
+                val_loader,
+                preview_num_samples,
+            )
+            sample_count = len(preview_samples)
+
+            test_encoder_outputs, audio_attention_mask = get_test_encoder_outputs(
+                [sample["audio_path"] for sample in preview_samples],
+                device,
+            )
+
+            encoded_prompt = tokenizer(
+                [prompt_text] * sample_count,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+            )
+
+            generated_ids = model.generate_caption(
+                audio_embeddings=test_encoder_outputs,
+                input_ids=encoded_prompt["input_ids"].to(device),
+                attention_mask=encoded_prompt["attention_mask"].to(device),
+                audio_attention_mask=audio_attention_mask,
+                max_new_tokens=30,
+                do_sample=False,
+                eos_token_id=tokenizer.eos_token_id,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+
+        preview_table = wandb.Table(
+            columns=[
+                "file_name",
+                "audio",
+                "ground_truth_caption",
+                "predicted_caption",
+            ]
+        )
+
+        for idx in range(sample_count):
+            generated_text = tokenizer.decode(
+                generated_ids[idx],
+                skip_special_tokens=True,
+            )
+
+            preview_table.add_data(
+                preview_samples[idx]["file_name"],
+                wandb.Audio(
+                    preview_samples[idx]["audio_path"],
+                    sample_rate=audio_sample_rate,
+                ),
+                preview_samples[idx]["caption"],
+                generated_text,
+            )
+
+        wandb.log(
+            {
+                "val_preview": preview_table,
+                f"val_preview_epoch_{epoch_idx + 1}": preview_table,
+            }
         )
 
         print(
@@ -338,6 +515,7 @@ def main():
         )
 
     print("\nTraining finished.")
+    wandb.finish()
 
 
 if __name__ == "__main__":
