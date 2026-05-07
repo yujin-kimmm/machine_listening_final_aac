@@ -12,6 +12,7 @@ Architecture (Early Feature Fusion):
     Conformer post-encoder                     → [B, T_b, 768]
 """
 
+import json
 import os
 import sys
 
@@ -174,6 +175,7 @@ class FusionEncoderConformer(nn.Module):
     def __init__(
         self,
         conformer_config=None,
+        conformer_config_path=None,
         num_beats_layers=13,
         beats_dim=768,
         convnext_dim=768,
@@ -196,19 +198,28 @@ class FusionEncoderConformer(nn.Module):
             output_dim=output_dim,
         )
 
-        # Conformer post-encoder
-        if conformer_config is None:
-            conformer_config = Wav2Vec2ConformerConfig(
-                hidden_size=output_dim,
-                num_hidden_layers=2,
-                num_attention_heads=12,
-                intermediate_size=1536,
-                hidden_act="swish",
-                conformer_conv_dropout=0.1,
-                attention_dropout=0.1,
-                hidden_dropout=0.1,
-                position_embeddings_type="relative",
-            )
+        # Conformer post-encoder: load from config file, direct config, or defaults
+        if conformer_config is None and conformer_config_path is not None:
+            with open(conformer_config_path, "r") as f:
+                conformer_config = Wav2Vec2ConformerConfig(**json.load(f))
+        elif conformer_config is None:
+            # Default: look for config/conformer_config.json relative to project root
+            default_path = os.path.join(_model_dir, "..", "config", "conformer_config.json")
+            if os.path.exists(default_path):
+                with open(default_path, "r") as f:
+                    conformer_config = Wav2Vec2ConformerConfig(**json.load(f))
+            else:
+                conformer_config = Wav2Vec2ConformerConfig(
+                    hidden_size=output_dim,
+                    num_hidden_layers=2,
+                    num_attention_heads=12,
+                    intermediate_size=1536,
+                    hidden_act="swish",
+                    conformer_conv_dropout=0.1,
+                    attention_dropout=0.1,
+                    hidden_dropout=0.1,
+                    position_embeddings_type="relative",
+                )
 
         self.conformer = Wav2Vec2ConformerEncoder(conformer_config)
         self.output_dim = output_dim
