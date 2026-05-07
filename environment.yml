@@ -1,0 +1,16 @@
+name: aac
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch=2.4
+  - torchaudio=2.4
+  - numpy<2
+  - pandas
+  - pip
+  - pip:
+    - soundfile
+    - transformers>=4.30,<5
+    - git+https://github.com/topel/audioset-convnext-inf.git

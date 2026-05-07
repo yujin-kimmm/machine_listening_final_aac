@@ -1,0 +1,16 @@
+# Large files
+pretrained_weights/
+clotho/
+embeddings/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
