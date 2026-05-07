@@ -80,7 +80,8 @@ class AudioPrefixGPT2(nn.Module):
         # Shape: (batch, prefix_length, gpt_dim)
 
         # Convert text token IDs to GPT-2 token embeddings
-        text_embeds = self.gpt2.transformer.wte(input_ids)
+        # text_embeds = self.gpt2.transformer.wte(input_ids)
+        text_embeds = self.gpt2.get_input_embeddings()(input_ids)
         # Shape: (batch, text_length, gpt_dim)
 
         # Concatenate audio prefix + text embeddings
@@ -162,7 +163,8 @@ class AudioPrefixGPT2(nn.Module):
         audio_prefix_embeds = self.audio_projection(audio_embeddings)
 
         # Prompt token IDs -> GPT-2 text embeddings
-        text_embeds = self.gpt2.transformer.wte(input_ids)
+        # text_embeds = self.gpt2.transformer.wte(input_ids)
+        text_embeds = self.gpt2.get_input_embeddings()(input_ids)
 
         # Audio prefix + prompt embeddings
         inputs_embeds = torch.cat(
