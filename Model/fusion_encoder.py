@@ -222,6 +222,12 @@ class FusionEncoderConformer(nn.Module):
                 )
 
         self.conformer = Wav2Vec2ConformerEncoder(conformer_config)
+        self.downsample = nn.Conv1d(
+            output_dim,
+            output_dim,
+            kernel_size=4,
+            stride=3,
+        )
         self.output_dim = output_dim
 
     @staticmethod
@@ -313,6 +319,16 @@ class FusionEncoderConformer(nn.Module):
             attention_mask=attention_mask,
         ).last_hidden_state
 
+        if conformer_out.size(1) >= 4:
+            conformer_out = self.downsample(
+                conformer_out.transpose(1, 2)
+            ).transpose(1, 2)
+            attention_mask = F.max_pool1d(
+                attention_mask.float().unsqueeze(1),
+                kernel_size=4,
+                stride=3,
+            ).squeeze(1).to(dtype=torch.bool)
+        
         return conformer_out, attention_mask
 
 class AudioToConformer(nn.Module):
@@ -514,4 +530,3 @@ if __name__ == "__main__":
         print("(Skipping AudioToConformer test — checkpoints not found)")
 
     print("🎉 All tests passed!")
-

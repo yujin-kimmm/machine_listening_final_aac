@@ -1,0 +1,28 @@
+caption_dir: /scratch/yk3281/dataset/clotho
+audio_root_dir: /scratch/yk3281/dataset/clotho
+
+batch_size: 8
+num_workers: 8
+epochs: 20
+lr: 0.0001
+weight_decay: 0.01
+val_ratio: 0.1
+
+audio_dim: 768
+max_length: 128
+preview_num_samples: 5
+audio_sample_rate: 44100
+do_sample: false
+
+lora_r: 8
+lora_alpha: 16
+lora_dropout: 0.1
+
+save_dir: run/0507_train_1
+prompt_text: "Describe this audio:"
+
+# wandb
+project: "audio-captioning"
+entity: "yujin-kimmm-new-york-university"
+name: "train_false_sample"
+wandb_dir: 0507_wandb/

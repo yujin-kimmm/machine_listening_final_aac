@@ -1,10 +1,12 @@
 import torch
+import torch.nn as nn
 import torchaudio
 from audioset_convnext_inf.pytorch.convnext import ConvNeXt
 
-class ConvNeXtEncoder:
+class ConvNeXtEncoder(nn.Module):
     
     def __init__(self, checkpoint_path):
+        super().__init__()
         self.model = ConvNeXt(in_chans=1, num_classes=527, use_torchaudio=False)
         # patch the hardcoded Conv2d to accept 1 channel instead of 3
         self.model.downsample_layers[0][0] = torch.nn.Conv2d(1, 96, kernel_size=(4,4), stride=(4,4))

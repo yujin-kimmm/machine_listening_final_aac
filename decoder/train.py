@@ -3,19 +3,33 @@ import math
 import os
 import sys
 
+print("import")
 import torch
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using device: {device}")
+print("A")
 import wandb
+print("B")
 import yaml
+print("C")
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
+print("import_done")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
+print("D")
 from dataset import ClothoAudioCaptionDataset, count_clotho_split_sources, count_unique_audio_ids, split_clotho_dataset
 
-from model import AudioPrefixGPT2
+print("E")
+from decoder import AudioPrefixGPT2
+print("F")
+from Model.fusion_encoder import AudioToConformer, load_audio_batch
 
-
-with open("config.yaml", "r") as f:
+print("G")
+with open("./config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 caption_dir = config["caption_dir"]
@@ -29,154 +43,22 @@ weight_decay = config["weight_decay"]
 val_ratio = config["val_ratio"]
 random_seed = 42 
 
-target_prefix_length = config["target_prefix_length"]
-prefix_length = config["prefix_length"] # for fake encoder
 audio_dim = config["audio_dim"]
 max_length = config["max_length"]
 preview_num_samples = config["preview_num_samples"]
 audio_sample_rate = config["audio_sample_rate"]
+do_sample = config["do_sample"]
+lora_r = config["lora_r"]
+lora_alpha = config["lora_alpha"]
+lora_dropout = config["lora_dropout"]
 
 save_dir = config["save_dir"]
 prompt_text = config["prompt_text"]
 _embedding_length_cache = {}
 
 
-def get_fake_encoder_outputs(audio_paths, device):
-    batch_embeddings = []
 
-    for audio_path in audio_paths:
-        path_hash = hashlib.md5(audio_path.encode("utf-8")).hexdigest()
-        seed = int(path_hash[:8], 16)
-
-        generator = torch.Generator()
-        generator.manual_seed(seed)
-
-        audio_embedding = torch.randn(
-            prefix_length,
-            audio_dim,
-            generator=generator,
-        )
-        batch_embeddings.append(audio_embedding)
-
-    fake_encoder_outputs = torch.stack(batch_embeddings, dim=0)
-    return fake_encoder_outputs.to(device)
-
-
-def get_global_max_embedding_length(embedding_root_dir):
-    if embedding_root_dir in _embedding_length_cache:
-        return _embedding_length_cache[embedding_root_dir]
-
-    max_sequence_length = 0
-
-    for split_name in ["development", "validation", "evaluation"]:
-        split_dir = os.path.join(embedding_root_dir, split_name)
-        if not os.path.isdir(split_dir):
-            continue
-
-        for file_name in sorted(os.listdir(split_dir)):
-            if not file_name.endswith(".pt"):
-                continue
-
-            embedding_path = os.path.join(split_dir, file_name)
-            embedding = torch.load(embedding_path, map_location="cpu")
-
-            if not isinstance(embedding, torch.Tensor):
-                raise TypeError(f"Expected tensor embedding at {embedding_path}")
-
-            if embedding.dim() == 3 and embedding.size(0) == 1:
-                embedding = embedding.squeeze(0)
-
-            if embedding.dim() == 1:
-                current_length = 1
-            elif embedding.dim() == 2:
-                current_length = embedding.size(0)
-            else:
-                raise ValueError(
-                    f"Expected 1D or 2D tensor at {embedding_path}, got shape {tuple(embedding.shape)}"
-                )
-
-            max_sequence_length = max(max_sequence_length, current_length)
-
-    if max_sequence_length == 0:
-        raise RuntimeError(
-            f"No embedding files found under {embedding_root_dir}"
-        )
-
-    _embedding_length_cache[embedding_root_dir] = max_sequence_length
-    return max_sequence_length
-
-
-def get_test_encoder_outputs(audio_paths, device, target_prefix_length=target_prefix_length):
-    embedding_root_dir = "/scratch/yk3281/repo/machine_listening_final_aac/decoder/test_emb"
-    batch_embeddings = []
-    audio_attention_masks = []
-    max_sequence_length = 0
-
-    for audio_path in audio_paths:
-        split_name = os.path.basename(os.path.dirname(audio_path))
-        audio_file_name = os.path.basename(audio_path)
-        embedding_path = os.path.join(
-            embedding_root_dir,
-            split_name,
-            f"{audio_file_name}.pt",
-        )
-
-        embedding = torch.load(embedding_path, map_location="cpu")
-
-        if not isinstance(embedding, torch.Tensor):
-            raise TypeError(f"Expected tensor embedding at {embedding_path}")
-
-        if embedding.dim() == 3 and embedding.size(0) == 1:
-            embedding = embedding.squeeze(0)
-
-        if embedding.dim() == 1:
-            embedding = embedding.unsqueeze(0)
-
-        if embedding.dim() != 2:
-            raise ValueError(
-                f"Expected 1D or 2D tensor at {embedding_path}, got shape {tuple(embedding.shape)}"
-            )
-
-        if target_prefix_length is not None:
-            embedding = torch.nn.functional.adaptive_avg_pool1d(
-                embedding.transpose(0, 1).unsqueeze(0),
-                target_prefix_length,
-            ).squeeze(0).transpose(0, 1)
-
-        batch_embeddings.append(embedding)
-        max_sequence_length = max(max_sequence_length, embedding.size(0))
-
-    padded_embeddings = []
-
-    for embedding in batch_embeddings:
-        sequence_length = embedding.size(0)
-        pad_length = max_sequence_length - sequence_length
-
-        if pad_length > 0:
-            pad_tensor = torch.zeros(
-                pad_length,
-                embedding.size(1),
-                dtype=embedding.dtype,
-            )
-            embedding = torch.cat([embedding, pad_tensor], dim=0)
-
-        padded_embeddings.append(embedding)
-        audio_attention_masks.append(
-            torch.cat(
-                [
-                    torch.ones(sequence_length, dtype=torch.long),
-                    torch.zeros(pad_length, dtype=torch.long),
-                ],
-                dim=0,
-            )
-        )
-
-    test_encoder_outputs = torch.stack(padded_embeddings, dim=0)
-    audio_attention_mask = torch.stack(audio_attention_masks, dim=0)
-    return test_encoder_outputs.to(device), audio_attention_mask.to(device)
-
-
-def run_batch(model, batch, device, inspect_batch=False):
+def run_batch(model, batch, encoder, device, inspect_batch=False):
     # Step A. Text side inputs from dataset
     input_ids = batch["input_ids"].to(device)
     attention_mask = batch["attention_mask"].to(device)
@@ -184,29 +66,30 @@ def run_batch(model, batch, device, inspect_batch=False):
     prompt_length = batch["prompt_length"][0].item()
 
     # Step B. Placeholder for future fusion encoder output
-    fake_encoder_outputs, audio_attention_mask = get_test_encoder_outputs(
-        batch["audio_path"],
-        device,
-    )
+    waveforms, lengths = load_audio_batch(batch["audio_path"])
+    waveforms = waveforms.to(device)
+    lengths = lengths.to(device)
+    encoder_out, mask = encoder(waveforms, lengths)
+    # encoder_out is [B, T, 768] and mask is [B, T]
 
     # Step C. Model handles projection to GPT-2 dim and prefix concatenation
     outputs = model(
-        audio_embeddings=fake_encoder_outputs,
+        audio_embeddings=encoder_out,
         input_ids=input_ids,
         attention_mask=attention_mask,
         labels=labels,
         prompt_length=prompt_length,
-        audio_attention_mask=audio_attention_mask,
+        audio_attention_mask=mask,
     )
 
     if inspect_batch:
         caption_token_count = (labels != -100).sum().item()
         print("[inspect] batch structure")
-        print(f"[inspect] test_encoder_outputs shape: {tuple(fake_encoder_outputs.shape)}")
+        print(f"[inspect] test_encoder_outputs shape: {tuple(encoder_out.shape)}")
         print(f"[inspect] input_ids shape: {tuple(input_ids.shape)}")
         print(f"[inspect] attention_mask shape: {tuple(attention_mask.shape)}")
         print(f"[inspect] labels shape: {tuple(labels.shape)}")
-        print(f"[inspect] prefix_length: {fake_encoder_outputs.shape[1]}")
+        print(f"[inspect] prefix_length: {encoder_out.shape[1]}")
         print(f"[inspect] prompt_length: {prompt_length}")
         print(f"[inspect] caption tokens contributing to loss: {caption_token_count}")
 
@@ -241,17 +124,18 @@ def collect_unique_preview_samples(val_loader, max_samples):
     return preview_samples
 
 
-def save_checkpoint(model, optimizer, epoch_idx, best_val_loss, save_path):
+def save_checkpoint(model, encoder, optimizer, epoch_idx, best_val_loss, save_path):
     checkpoint = {
         "epoch": epoch_idx + 1,
         "model_state_dict": model.state_dict(),
+        "encoder_state_dict": encoder.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "best_val_loss": best_val_loss,
     }
     torch.save(checkpoint, save_path)
 
 
-def load_checkpoint_if_available(model, optimizer, device, resume=False):
+def load_checkpoint_if_available(model, encoder, optimizer, device, resume=False):
     last_ckpt_path = os.path.join(save_dir, "last.pt")
 
     if not resume:
@@ -264,6 +148,7 @@ def load_checkpoint_if_available(model, optimizer, device, resume=False):
 
     checkpoint = torch.load(last_ckpt_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
+    encoder.load_state_dict(checkpoint["encoder_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
     start_epoch = checkpoint["epoch"]
@@ -277,7 +162,7 @@ def load_checkpoint_if_available(model, optimizer, device, resume=False):
 
 
 def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print("Main function start")
     os.makedirs(save_dir, exist_ok=True)
     resume = "--resume" in sys.argv
 
@@ -289,7 +174,6 @@ def main():
         dir=config["wandb_dir"],
     )
 
-    print(f"Using device: {device}")
     # ----------------
     # Build 
     # ----------------
@@ -334,16 +218,29 @@ def main():
         audio_dim=audio_dim,
         freeze_gpt2=True,
         use_lora=True,
+        lora_r=lora_r,
+        lora_alpha=lora_alpha,
+        lora_dropout=lora_dropout,
+    )
+    encoder = AudioToConformer(
+        "pretrained_weights/BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt1.pt",
+        "pretrained_weights/convnext_tiny_465mAP_BL_AC_70kit.pth",
     )
     model.gpt2.config.pad_token_id = tokenizer.eos_token_id
     model = model.to(device)
+    encoder = encoder.to(device)
 
     optimizer = AdamW(
-        (param for param in model.parameters() if param.requires_grad),
+        (
+            param
+            for module in (model, encoder)
+            for param in module.parameters()
+            if param.requires_grad
+        ),
         lr=lr,
         weight_decay=weight_decay,
     )
-
+    
     # print(f"Full dataset samples: {len(full_dataset)}")
     # print(f"Train samples: {len(train_dataset)}")
     # print(f"Val samples: {len(val_dataset)}")
@@ -359,6 +256,7 @@ def main():
 
     start_epoch, best_val_loss = load_checkpoint_if_available(
         model,
+        encoder,
         optimizer,
         device,
         resume=resume,
@@ -370,11 +268,12 @@ def main():
         print(f"\n========== Epoch {epoch_idx + 1}/{epochs} ==========")
         # print(" Train decoder with fake encoder outputs")
         model.train()
+        encoder.train()
         train_loss_sum = 0.0
 
         for batch_idx, batch in enumerate(train_loader):
             inspect_batch = (epoch_idx == 0 and batch_idx == 0)
-            loss = run_batch(model, batch, device, inspect_batch=inspect_batch)
+            loss = run_batch(model, batch, encoder, device, inspect_batch=inspect_batch)
 
             optimizer.zero_grad()
             loss.backward()
@@ -398,11 +297,12 @@ def main():
         # validation
         # -------------
         model.eval()
+        encoder.eval()
         val_loss_sum = 0.0
 
         with torch.no_grad():
             for batch in val_loader:
-                loss = run_batch(model, batch, device)
+                loss = run_batch(model, batch, encoder, device)
                 val_loss_sum += loss.item()
 
         val_loss = val_loss_sum / len(val_loader)
@@ -431,10 +331,11 @@ def main():
             )
             sample_count = len(preview_samples)
 
-            test_encoder_outputs, audio_attention_mask = get_test_encoder_outputs(
-                [sample["audio_path"] for sample in preview_samples],
-                device,
-            )
+            preview_audio_paths = [sample["audio_path"] for sample in preview_samples]
+            waveforms, lengths = load_audio_batch(preview_audio_paths)
+            waveforms = waveforms.to(device)
+            lengths = lengths.to(device)
+            test_encoder_outputs, audio_attention_mask = encoder(waveforms, lengths)
 
             encoded_prompt = tokenizer(
                 [prompt_text] * sample_count,
@@ -449,7 +350,7 @@ def main():
                 attention_mask=encoded_prompt["attention_mask"].to(device),
                 audio_attention_mask=audio_attention_mask,
                 max_new_tokens=30,
-                do_sample=False,
+                do_sample=do_sample,
                 eos_token_id=tokenizer.eos_token_id,
                 pad_token_id=tokenizer.eos_token_id,
             )
@@ -499,6 +400,7 @@ def main():
             best_ckpt_path = os.path.join(save_dir, "best.pt")
             save_checkpoint(
                 model,
+                encoder,
                 optimizer,
                 epoch_idx,
                 best_val_loss,
@@ -508,6 +410,7 @@ def main():
         last_ckpt_path = os.path.join(save_dir, "last.pt")
         save_checkpoint(
             model,
+            encoder,
             optimizer,
             epoch_idx,
             best_val_loss,
@@ -519,4 +422,5 @@ def main():
 
 
 if __name__ == "__main__":
+    print("main_start")
     main()
