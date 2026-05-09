@@ -1,9 +1,11 @@
 caption_dir: /scratch/yk3281/dataset/clotho
 audio_root_dir: /scratch/yk3281/dataset/clotho
+test_audio_dir: /scratch/yk3281/dataset/clotho_test/test/test
 
 batch_size: 8
 num_workers: 8
 epochs: 20
+early_stopping_patience: 5
 lr: 0.0001
 weight_decay: 0.01
 val_ratio: 0.1
@@ -18,11 +20,13 @@ lora_r: 8
 lora_alpha: 16
 lora_dropout: 0.1
 
-save_dir: run/0507_train_1
+save_dir: outputs/r8_a16_val10
+best_checkpoint_path: outputs/r8_a16_val10/r8_a16_val10_best.pt
+output_csv_path: r8_al16_results.csv
 prompt_text: "Describe this audio:"
 
 # wandb
 project: "audio-captioning"
 entity: "yujin-kimmm-new-york-university"
-name: "train_false_sample"
-wandb_dir: 0507_wandb/
+name: "r8_a16_val10"
+wandb_dir: wandblog/r8_a16_val10

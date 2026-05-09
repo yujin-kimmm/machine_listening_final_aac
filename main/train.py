@@ -3,32 +3,24 @@ import math
 import os
 import sys
 
-print("import")
 import torch
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
-print("A")
 import wandb
-print("B")
 import yaml
-print("C")
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
-print("import_done")
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-print("D")
-from dataset import ClothoAudioCaptionDataset, count_clotho_split_sources, count_unique_audio_ids, split_clotho_dataset
+from dataset import ClothoAudioCaptionDataset, split_clotho_dataset
 
-print("E")
-from decoder import AudioPrefixGPT2
-print("F")
+from Model.decoder import AudioPrefixGPT2
 from Model.fusion_encoder import AudioToConformer, load_audio_batch
 
-print("G")
 with open("./config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
@@ -38,6 +30,7 @@ audio_root_dir = config["audio_root_dir"]
 batch_size = config["batch_size"]
 num_workers = config["num_workers"]
 epochs = config["epochs"]
+early_stopping_patience = config["early_stopping_patience"]
 lr = config["lr"]
 weight_decay = config["weight_decay"]
 val_ratio = config["val_ratio"]
@@ -53,6 +46,7 @@ lora_alpha = config["lora_alpha"]
 lora_dropout = config["lora_dropout"]
 
 save_dir = config["save_dir"]
+best_checkpoint_path = config["best_checkpoint_path"]
 prompt_text = config["prompt_text"]
 _embedding_length_cache = {}
 
@@ -85,7 +79,7 @@ def run_batch(model, batch, encoder, device, inspect_batch=False):
     if inspect_batch:
         caption_token_count = (labels != -100).sum().item()
         print("[inspect] batch structure")
-        print(f"[inspect] test_encoder_outputs shape: {tuple(encoder_out.shape)}")
+        print(f"[inspect] encoder_outputs shape: {tuple(encoder_out.shape)}")
         print(f"[inspect] input_ids shape: {tuple(input_ids.shape)}")
         print(f"[inspect] attention_mask shape: {tuple(attention_mask.shape)}")
         print(f"[inspect] labels shape: {tuple(labels.shape)}")
@@ -164,6 +158,9 @@ def load_checkpoint_if_available(model, encoder, optimizer, device, resume=False
 def main():
     print("Main function start")
     os.makedirs(save_dir, exist_ok=True)
+    best_checkpoint_dir = os.path.dirname(best_checkpoint_path)
+    if best_checkpoint_dir:
+        os.makedirs(best_checkpoint_dir, exist_ok=True)
     resume = "--resume" in sys.argv
 
     wandb.init(
@@ -241,18 +238,8 @@ def main():
         weight_decay=weight_decay,
     )
     
-    # print(f"Full dataset samples: {len(full_dataset)}")
-    # print(f"Train samples: {len(train_dataset)}")
-    # print(f"Val samples: {len(val_dataset)}")
-    # print(f"Combined pool audio files: {count_unique_audio_ids(full_dataset)}")
-    # print(f"Train audio files: {count_unique_audio_ids(train_dataset)}")
-    # print(f"Val audio files: {count_unique_audio_ids(val_dataset)}")
-    # print(f"Original Clotho split counts in combined pool: {count_clotho_split_sources(full_dataset)}")
-    # print(f"Original Clotho split counts in train split: {count_clotho_split_sources(train_dataset)}")
-    # print(f"Original Clotho split counts in val split: {count_clotho_split_sources(val_dataset)}")
-    # print(f"Split rule: combine development/validation/evaluation, then split by audio_id with val_ratio={val_ratio}")
-    # print("\nTrainable parameters:")
-    # model.print_trainable_parameters()
+    print("\nTrainable parameters:")
+    model.print_trainable_parameters()
 
     start_epoch, best_val_loss = load_checkpoint_if_available(
         model,
@@ -261,6 +248,7 @@ def main():
         device,
         resume=resume,
     )
+    epochs_without_improvement = 0
     # ----------------- 
     # Train 
     # ------------------
@@ -397,14 +385,20 @@ def main():
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            best_ckpt_path = os.path.join(save_dir, "best.pt")
+            epochs_without_improvement = 0
             save_checkpoint(
                 model,
                 encoder,
                 optimizer,
                 epoch_idx,
                 best_val_loss,
-                best_ckpt_path,
+                best_checkpoint_path,
+            )
+        else:
+            epochs_without_improvement += 1
+            print(
+                f"[early_stopping] no improvement for "
+                f"{epochs_without_improvement}/{early_stopping_patience} epoch(s)"
             )
 
         last_ckpt_path = os.path.join(save_dir, "last.pt")
@@ -417,10 +411,17 @@ def main():
             last_ckpt_path,
         )
 
+        if epochs_without_improvement >= early_stopping_patience:
+            print(
+                f"[early_stopping] stop training at epoch {epoch_idx + 1} "
+                f"because val_loss did not improve for "
+                f"{early_stopping_patience} consecutive epochs"
+            )
+            break
+
     print("\nTraining finished.")
     wandb.finish()
 
 
 if __name__ == "__main__":
-    print("main_start")
     main()
