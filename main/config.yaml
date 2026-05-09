@@ -8,7 +8,7 @@ epochs: 20
 early_stopping_patience: 5
 lr: 0.0001
 weight_decay: 0.01
-val_ratio: 0.1
+val_ratio: 0.2
 
 audio_dim: 768
 max_length: 128
@@ -16,17 +16,17 @@ preview_num_samples: 5
 audio_sample_rate: 44100
 do_sample: false
 
-lora_r: 8
-lora_alpha: 16
+lora_r: 16
+lora_alpha: 32
 lora_dropout: 0.1
 
-save_dir: outputs/r8_a16_val10
-best_checkpoint_path: outputs/r8_a16_val10/r8_a16_val10_best.pt
-output_csv_path: r8_al16_results.csv
+save_dir: outputs/r16_a32_val20
+best_checkpoint_path: outputs/r16_a32_val20/r16_a32_val20_best.pt
+output_csv_path: r16_a32_val20_results.csv
 prompt_text: "Describe this audio:"
 
 # wandb
 project: "audio-captioning"
 entity: "yujin-kimmm-new-york-university"
-name: "r8_a16_val10"
-wandb_dir: wandblog/r8_a16_val10
+name: "r16_a32_val20"
+wandb_dir: wandblog/r16_a32_val20

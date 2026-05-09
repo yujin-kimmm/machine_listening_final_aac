@@ -1,3 +1,4 @@
+import argparse
 import hashlib
 import math
 import os
@@ -21,7 +22,11 @@ from dataset import ClothoAudioCaptionDataset, split_clotho_dataset
 from Model.decoder import AudioPrefixGPT2
 from Model.fusion_encoder import AudioToConformer, load_audio_batch
 
-with open("./config.yaml", "r") as f:
+parser = argparse.ArgumentParser()
+parser.add_argument("--config-path", default="./config.yaml", help="Path to config yaml")
+args = parser.parse_args()
+
+with open(args.config_path, "r") as f:
     config = yaml.safe_load(f)
 
 caption_dir = config["caption_dir"]
