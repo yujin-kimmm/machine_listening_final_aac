@@ -17,7 +17,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from dataset import ClothoAudioCaptionDataset, split_clotho_dataset
+from dataset import (
+    ClothoAudioCaptionDataset,
+    count_clotho_split_sources,
+    count_unique_audio_ids,
+)
 
 from Model.decoder import AudioPrefixGPT2
 from Model.fusion_encoder import AudioToConformer, load_audio_batch
@@ -38,7 +42,6 @@ epochs = config["epochs"]
 early_stopping_patience = config["early_stopping_patience"]
 lr = config["lr"]
 weight_decay = config["weight_decay"]
-val_ratio = config["val_ratio"]
 random_seed = 42 
 
 audio_dim = config["audio_dim"]
@@ -53,6 +56,8 @@ lora_dropout = config["lora_dropout"]
 save_dir = config["save_dir"]
 best_checkpoint_path = config["best_checkpoint_path"]
 prompt_text = config["prompt_text"]
+train_split = config.get("train_split", "development")
+validation_split = config.get("validation_split", "validation")
 _embedding_length_cache = {}
 
 
@@ -184,21 +189,37 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     tokenizer.pad_token = tokenizer.eos_token
 
-    # Build Dataset
-    full_dataset = ClothoAudioCaptionDataset(
+    # Build Dataset using the original Clotho split definitions.
+    train_dataset = ClothoAudioCaptionDataset(
         caption_dir=caption_dir,
         audio_root_dir=audio_root_dir,
         tokenizer=tokenizer,
         prompt=prompt_text,
         max_length=max_length,
         check_files=True,
+        clotho_splits=train_split,
+    )
+    val_dataset = ClothoAudioCaptionDataset(
+        caption_dir=caption_dir,
+        audio_root_dir=audio_root_dir,
+        tokenizer=tokenizer,
+        prompt=prompt_text,
+        max_length=max_length,
+        check_files=True,
+        clotho_splits=validation_split,
     )
 
-    # Split dataset
-    train_dataset, val_dataset = split_clotho_dataset(
-        full_dataset,
-        val_ratio=val_ratio,
-        random_seed=random_seed,
+    print(
+        f"Train split: {train_split} | "
+        f"samples: {len(train_dataset)} | "
+        f"unique audios: {count_unique_audio_ids(train_dataset)} | "
+        f"source counts: {count_clotho_split_sources(train_dataset)}"
+    )
+    print(
+        f"Validation split: {validation_split} | "
+        f"samples: {len(val_dataset)} | "
+        f"unique audios: {count_unique_audio_ids(val_dataset)} | "
+        f"source counts: {count_clotho_split_sources(val_dataset)}"
     )
 
     # Build Dataloadesr

@@ -13,6 +13,7 @@ if PROJECT_ROOT not in sys.path:
 
 from Model.decoder import AudioPrefixGPT2
 from Model.fusion_encoder import AudioToConformer, load_audio_batch
+from dataset import list_audio_files_in_dir, list_clotho_audio_files
 
 
 def main(args):
@@ -22,7 +23,7 @@ def main(args):
     with open(args.config_path, "r") as f:
         config = yaml.safe_load(f)
 
-    audio_path = config["test_audio_dir"]
+    audio_root_dir = config["audio_root_dir"]
     audio_dim = config["audio_dim"]
     prompt_text = config["prompt_text"]
     lora_r = config["lora_r"]
@@ -31,24 +32,18 @@ def main(args):
     do_sample = config["do_sample"]
     checkpoint_path = config["best_checkpoint_path"]
     output_csv_path = config["output_csv_path"]
-    audio_paths = []
+    inference_split = config.get("inference_split", "evaluation")
+    inference_audio_dir = config.get("inference_audio_dir")
 
-    if not os.path.isdir(audio_path):
-        raise NotADirectoryError(f"Audio directory not found: {audio_path}")
+    if inference_audio_dir:
+        audio_paths = list_audio_files_in_dir(inference_audio_dir)
+        audio_source_desc = inference_audio_dir
+    else:
+        audio_paths = list_clotho_audio_files(audio_root_dir, inference_split)
+        audio_source_desc = f"{audio_root_dir}/{inference_split}"
 
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
-
-    for file_name in sorted(os.listdir(audio_path)):
-        file_path = os.path.join(audio_path, file_name)
-        if not os.path.isfile(file_path):
-            continue
-        if not file_name.lower().endswith((".wav", ".mp3", ".flac", ".ogg", ".m4a")):
-            continue
-        audio_paths.append(file_path)
-
-    if len(audio_paths) == 0:
-        raise RuntimeError(f"No audio files found in: {audio_path}")
 
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     tokenizer.pad_token = tokenizer.eos_token
@@ -84,7 +79,7 @@ def main(args):
         truncation=True,
     )
 
-    print(f"Audio directory: {audio_path}")
+    print(f"Inference audio source: {audio_source_desc}")
     print(f"Checkpoint path: {checkpoint_path}")
     print(f"Prompt: {prompt_text}")
     print(f"Output csv: {output_csv_path}")
