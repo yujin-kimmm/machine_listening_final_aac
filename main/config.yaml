@@ -1,6 +1,8 @@
 caption_dir: /scratch/yk3281/dataset/clotho
 audio_root_dir: /scratch/yk3281/dataset/clotho
-test_audio_dir: /scratch/yk3281/dataset/clotho_test/test/test
+train_split: development
+validation_split: validation
+inference_split: evaluation
 
 batch_size: 8
 num_workers: 8
@@ -8,7 +10,6 @@ epochs: 20
 early_stopping_patience: 5
 lr: 0.0001
 weight_decay: 0.01
-val_ratio: 0.2
 
 audio_dim: 768
 max_length: 128
@@ -18,15 +19,15 @@ do_sample: false
 
 lora_r: 16
 lora_alpha: 32
-lora_dropout: 0.1
+lora_dropout: 0.2
 
-save_dir: outputs/r16_a32_val20
-best_checkpoint_path: outputs/r16_a32_val20/r16_a32_val20_best.pt
-output_csv_path: r16_a32_val20_results.csv
+save_dir: outputs/r16_a32_d2
+best_checkpoint_path: outputs/r16_a32_d2/r16_a32_d2_best.pt
+output_csv_path: r16_a32_d2_results.csv
 prompt_text: "Describe this audio:"
 
 # wandb
 project: "audio-captioning"
 entity: "yujin-kimmm-new-york-university"
-name: "r16_a32_val20"
-wandb_dir: wandblog/r16_a32_val20
+name: "r16_a32_d2"
+wandb_dir: wandblog/r16_a32_d2
