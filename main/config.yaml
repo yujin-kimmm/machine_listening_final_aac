@@ -19,15 +19,16 @@ do_sample: false
 
 lora_r: 16
 lora_alpha: 32
-lora_dropout: 0.2
+lora_dropout: 0.05
 
-save_dir: outputs/r16_a32_d2
-best_checkpoint_path: outputs/r16_a32_d2/r16_a32_d2_best.pt
-output_csv_path: r16_a32_d2_results.csv
+save_dir: outputs/r16_a32_d-5
+best_checkpoint_path: outputs/r16_a32_d-5/r16_a32_d-5_best.pt
+output_csv_path: r16_a32_d-5_results.csv
 prompt_text: "Describe this audio:"
 
 # wandb
+use_wandb: true
 project: "audio-captioning"
 entity: "yujin-kimmm-new-york-university"
-name: "r16_a32_d2"
-wandb_dir: wandblog/r16_a32_d2
+name: "r16_a32_d-5"
+wandb_dir: wandblog/r16_a32_d-5
