@@ -203,8 +203,8 @@ class FusionEncoderConformer(nn.Module):
             with open(conformer_config_path, "r") as f:
                 conformer_config = Wav2Vec2ConformerConfig(**json.load(f))
         elif conformer_config is None:
-            # Default: look for config/conformer_config.json relative to project root
-            default_path = os.path.join(_model_dir, "..", "config", "conformer_config.json")
+            # Default: look for conformer_config.json next to this module.
+            default_path = os.path.join(_model_dir, "conformer_config.json")
             if os.path.exists(default_path):
                 with open(default_path, "r") as f:
                     conformer_config = Wav2Vec2ConformerConfig(**json.load(f))
