@@ -33,6 +33,8 @@ Pretrained audio encoder weights are expected under:
 main/pretrained_weights/
 ```
 
+Pretrained audio encoder weights can be downloaded from [here](https://drive.google.com/drive/folders/1VI8NQi34Mxp4euX9N98g58RlJlEdORHA?usp=sharing)
+
 ## Training
 
 Training should be run from the `main` directory.
