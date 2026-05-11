@@ -7,7 +7,6 @@ import sys
 import torch
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
-import wandb
 import yaml
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
@@ -58,6 +57,7 @@ best_checkpoint_path = config["best_checkpoint_path"]
 prompt_text = config["prompt_text"]
 train_split = config.get("train_split", "development")
 validation_split = config.get("validation_split", "validation")
+use_wandb = config.get("use_wandb", True)
 _embedding_length_cache = {}
 
 
@@ -173,13 +173,20 @@ def main():
         os.makedirs(best_checkpoint_dir, exist_ok=True)
     resume = "--resume" in sys.argv
 
-    wandb.init(
-        project=config["project"],
-        entity=config["entity"],
-        name=config["name"],
-        config=config,
-        dir=config["wandb_dir"],
-    )
+    wandb = None
+    if use_wandb:
+        import wandb
+
+        wandb.init(
+            project=config["project"],
+            entity=config["entity"],
+            name=config["name"],
+            config=config,
+            dir=config["wandb_dir"],
+        )
+        print("W&B logging: on")
+    else:
+        print("W&B logging: off")
 
     # ----------------
     # Build 
@@ -322,15 +329,16 @@ def main():
         val_loss = val_loss_sum / len(val_loader)
         val_ppl = math.exp(val_loss) if val_loss < 20 else float("inf")
 
-        wandb.log(
-            {
-                "epoch": epoch_idx + 1,
-                "train_loss": train_loss,
-                # "train_ppl": train_ppl,
-                "val_loss": val_loss,
-                # "val_ppl": val_ppl,
-            }
-        )
+        if use_wandb:
+            wandb.log(
+                {
+                    "epoch": epoch_idx + 1,
+                    "train_loss": train_loss,
+                    # "train_ppl": train_ppl,
+                    "val_loss": val_loss,
+                    # "val_ppl": val_ppl,
+                }
+            )
 
         print(
             f"[val] epoch {epoch_idx + 1} | "
@@ -369,37 +377,38 @@ def main():
                 pad_token_id=tokenizer.eos_token_id,
             )
 
-        preview_table = wandb.Table(
-            columns=[
-                "file_name",
-                "audio",
-                "ground_truth_caption",
-                "predicted_caption",
-            ]
-        )
-
-        for idx in range(sample_count):
-            generated_text = tokenizer.decode(
-                generated_ids[idx],
-                skip_special_tokens=True,
+        if use_wandb:
+            preview_table = wandb.Table(
+                columns=[
+                    "file_name",
+                    "audio",
+                    "ground_truth_caption",
+                    "predicted_caption",
+                ]
             )
 
-            preview_table.add_data(
-                preview_samples[idx]["file_name"],
-                wandb.Audio(
-                    preview_samples[idx]["audio_path"],
-                    sample_rate=audio_sample_rate,
-                ),
-                preview_samples[idx]["caption"],
-                generated_text,
-            )
+            for idx in range(sample_count):
+                generated_text = tokenizer.decode(
+                    generated_ids[idx],
+                    skip_special_tokens=True,
+                )
 
-        wandb.log(
-            {
-                "val_preview": preview_table,
-                f"val_preview_epoch_{epoch_idx + 1}": preview_table,
-            }
-        )
+                preview_table.add_data(
+                    preview_samples[idx]["file_name"],
+                    wandb.Audio(
+                        preview_samples[idx]["audio_path"],
+                        sample_rate=audio_sample_rate,
+                    ),
+                    preview_samples[idx]["caption"],
+                    generated_text,
+                )
+
+            wandb.log(
+                {
+                    "val_preview": preview_table,
+                    f"val_preview_epoch_{epoch_idx + 1}": preview_table,
+                }
+            )
 
         print(
             f"[epoch {epoch_idx + 1}] "
@@ -446,7 +455,8 @@ def main():
             break
 
     print("\nTraining finished.")
-    wandb.finish()
+    if use_wandb:
+        wandb.finish()
 
 
 if __name__ == "__main__":

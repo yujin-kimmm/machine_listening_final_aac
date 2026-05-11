@@ -11,6 +11,7 @@ dependencies:
   - pandas
   - pip
   - pip:
+    - wandb
     - soundfile
     - transformers>=4.30,<5
     - git+https://github.com/topel/audioset-convnext-inf.git
