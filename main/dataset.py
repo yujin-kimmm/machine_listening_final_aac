@@ -278,53 +278,6 @@ class ClothoAudioCaptionDataset(Dataset):
         }
 
 
-def split_clotho_dataset(dataset, val_ratio=0.1, random_seed=42):
-    """
-    Legacy random split helper.
-
-    Prefer loading explicit Clotho splits directly:
-      - development for training
-      - validation for validation
-      - evaluation for inference
-    """
-    audio_id_to_indices = {}
-
-    for idx, sample in enumerate(dataset.samples):
-        audio_id = sample["audio_id"]
-        if audio_id not in audio_id_to_indices:
-            audio_id_to_indices[audio_id] = []
-        audio_id_to_indices[audio_id].append(idx)
-
-    all_audio_ids = sorted(audio_id_to_indices.keys())
-    if len(all_audio_ids) == 0:
-        raise RuntimeError("No audio ids found for train/validation split.")
-
-    generator = torch.Generator().manual_seed(random_seed)
-    perm = torch.randperm(len(all_audio_ids), generator=generator).tolist()
-    shuffled_audio_ids = [all_audio_ids[idx] for idx in perm]
-
-    val_audio_count = max(1, int(len(shuffled_audio_ids) * val_ratio))
-    train_audio_count = len(shuffled_audio_ids) - val_audio_count
-
-    if train_audio_count <= 0:
-        raise RuntimeError("Validation split is too large. No train audio ids remain.")
-
-    train_audio_ids = set(shuffled_audio_ids[:train_audio_count])
-    val_audio_ids = set(shuffled_audio_ids[train_audio_count:])
-
-    train_indices = []
-    val_indices = []
-
-    for audio_id, indices in audio_id_to_indices.items():
-        if audio_id in train_audio_ids:
-            train_indices.extend(indices)
-        elif audio_id in val_audio_ids:
-            val_indices.extend(indices)
-
-    train_dataset = Subset(dataset, train_indices)
-    val_dataset = Subset(dataset, val_indices)
-    return train_dataset, val_dataset
-
 
 def count_unique_audio_ids(dataset):
     if isinstance(dataset, Subset):
