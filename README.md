@@ -1,6 +1,6 @@
 # 2026 Spring NYU Machine Listening Final Project
 
-Atilay Kucukoglu, Ivana Rasch, Yujin Kim
+Ivana Rasch Chinchilla, Mehmet Atilay Kucukoglu,  Yujin Kim
 
 Task: DCASE Challenge 2023 task 6a - Automated Audio Captioning
 
