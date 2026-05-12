@@ -62,3 +62,7 @@ python inference.py --config-path config.yaml
 
 The script loads `best_checkpoint_path` and writes predictions to
 `output_csv_path`.
+
+## Evaluation
+
+The evaluation is done by the [evaluation repository](https://github.com/audio-captioning/caption-evaluation-tools) from DCASE Challenge.
